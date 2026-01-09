@@ -1,2 +1,7 @@
 # machine-learning-data-science
 Collection of machine learning, data science and statistical modeling projects
+
+## Python
+
+1. Binary classification: My first contact with machine learning, binary classification using decision tree and KNN
+2. Regression: Custom implementation of the random forest, regression using the random forest, linear regression, KNN and decision tree
