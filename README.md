@@ -10,3 +10,7 @@ Collection of machine learning, data science and statistical modeling projects
 5. **Exploratory data analysis**: Analyzing and visualizing data from animal shelter, trying to find relationships between features
 6. **Public transport network analysis**: Analyzing and visualizing the tram network in Prague, exploring the important stops and answering questions
 7. **Machine learning visualization**: Using decision tree to predict obesity, analyzing and visualizing the dataset as well as the classification results
+
+## R
+
+1. **Employment in Austria**: Statistical analysis of employment data in different sectors in Austria in 2022, contingency table, statistical tests

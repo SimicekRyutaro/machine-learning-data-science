@@ -1,0 +1,293 @@
+# Zaměstnanost v Rakousku
+
+Budu zkoumat počet zaměstnanců v různých odvětvích v různých regionech Rakouska v roce 2022. [Data](https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/default/table) si připravím, prozkoumám jednotlivé příznaky a provedu tři statistické testy.
+
+```{r}
+library(eurostat)
+library(ggplot2)
+library(readxl)
+```
+
+## Příprava dat, základní statistická šetření
+
+```{r}
+data <- get_eurostat("nama_10r_3empers")
+head(data)
+```
+
+```{r}
+print(sum(is.na(data)))
+```
+
+Vyfiltruji si pouze NUTS 3 regiony Rakouska a záznamy z roku 2022, kde wstatus je *EMP* (zaměstnaný). Také se zbavím sloupců, které nebudu potřebovat. Ve sloupci freq je pouze jediná hodnota - *A* (annual). Ve sloupci unit je také pouze jedna hodnota - *THS* (thousand). Ve sloupci values jsou tedy počty zaměstnaných osob v tisících pro každý rok. Chybějící hodnoty v datasetu žádné nejsou, takže je nemusím řešit.
+
+```{r}
+print(unique(data$freq))
+print(unique(data$unit))
+print(unique(data$TIME_PERIOD))
+```
+
+```{r}
+df <- data[grepl("^AT.{3}", data$geo),]
+df <- df[df$TIME_PERIOD == "2022-01-01",]
+df <- df[df$wstatus == "EMP",]
+df$freq <- NULL
+df$unit <- NULL
+df$wstatus <- NULL
+df$TIME_PERIOD <- NULL
+df
+```
+
+Zbyly mi 3 sloupce:
+
+-   nace_r2 - odvětví zaměstnání
+-   geo - NUTS 3 region
+-   values - počet zaměstnanců v tisících pro každé odvětví a region
+
+Záznamy zagreguji do nace_r2 kategorií (*A-F*, *G-J*, *K-N*, *O-U*). Musím si dát pozor, že nynější kategorie *B-E* v sobě již obsahuje kategorii *C*. Kategorie jsou následující:
+
+-   A-F - zemědělství, průmysl, stavebnictví
+
+-   G-J - maloobchod, doprava, ubytování, stravování
+
+-   K-N - ICT, finančnictví
+
+-   O-U - veřejný sektor (administrativa, školství, zdravotnictví)
+
+```{r}
+unique(df$nace_r2)
+```
+
+```{r}
+df_tmp <- df[df$nace_r2 %in% c("A", "B-E", "F"),]
+df_tmp <- aggregate(values ~ geo, data = df_tmp, sum)
+df_tmp$nace_r2 <- "A-F"
+df <- rbind(df_tmp, df)
+df <- df[df$nace_r2 %in% c("A-F", "G-J", "K-N", "O-U"),]
+df <- df[c(1, 3, 2)]
+df$geo <- factor(df$geo)
+df$nace_r2 <- factor(df$nace_r2)
+df
+```
+
+Ke kódům NUTS 3 regionů přidám i jejich názvy. Používám k tomu dokument od eurostatu.\
+[Link na web](https://ec.europa.eu/eurostat/web/nuts)\
+[Link na stažení dokumentu](https://ec.europa.eu/eurostat/documents/345175/629341/NUTS2021-NUTS2024.xlsx/2b35915f-9c14-6841-8197-353408c4522d?t=1717505289640)
+
+```{r}
+region_names <- read_excel("NUTS2021-NUTS2024.xlsx", sheet=1)
+region_names <- region_names[c("NUTS Code", "NUTS label")]
+colnames(region_names) <- c("code", "label")
+region_names
+```
+
+```{r}
+df <- merge(df, region_names, by.x="geo", by.y="code", all.x=TRUE)
+df$label <- factor(df$label)
+df
+```
+
+```{r}
+summary(df)
+```
+
+Vidíme, že Rakousko má celkem 36 NUTS 3 regionů, pro každý z nich máme 4 záznamy - pro každé odvětví zaměstnání. Celkem to je 144 záznamů. Medián napříč všemi daty je 20.1, průměr 32.52. Maximum je 358.3, to znamená, že v nějakém regionu bylo v roce 2022 zaměstnaných 358.3 tisíc lidí jen v jednom ze čtyř odvětví. Jak lze vidět níže, jde o Vídeň (*AT130*) a veřejný sektor (*O-U*). Minimum je nula, tedy v nějakém regionu nejsou zaměstnanci v nějakém sektoru. Je to region *ATZZZ* neboli Extra-Regio NUTS 3, což jsou oblasti, které nejsou součástí žádného konkrétního regionu (např. mořské vody, velvyslanectví, vesmírné základny, vojenské základny v zahraničí).
+
+```{r}
+df[df$values == 358.3,]
+```
+
+```{r}
+df[df$values == 0,]
+```
+
+Podívejme se ještě na statistické míry jednotlivých odvětví.
+
+```{r}
+df_af <- df[df$nace_r2 == "A-F",]
+df_gj <- df[df$nace_r2 == "G-J",]
+df_kn <- df[df$nace_r2 == "K-N",]
+df_ou <- df[df$nace_r2 == "O-U",]
+```
+
+```{r}
+cat("A-F\n")
+print(summary(df_af$values))
+cat(c("   Var:", var(df_af$values)))
+cat("\nG-J\n")
+print(summary(df_gj$values))
+cat(c("   Var:", var(df_gj$values)))
+cat("\nK-N\n")
+print(summary(df_kn$values))
+cat(c("   Var:", var(df_kn$values)))
+cat("\nO-U\n")
+print(summary(df_ou$values))
+cat(c("   Var:", var(df_ou$values)))
+```
+
+Vidíme, že průměr je v odvětvích *A-F*, *G-J* a *O-U* okolo 35, zatímco v odvětví *K-N* je 22.039. *K-N* má i nižší medián než ostatní skupiny. *A-F* má naopak vyšší medián než ostatní skupiny. Průměr mají sice podobný, ale medián jiný, to dává smysl, když se podíváme na rozptyly, příp. maxima.
+
+Podívejme se na 5 regionů s nejvíce a nejméně zaměstnanci pro každé odvětví.
+
+```{r}
+sorted <- df_af[order(-df_af$values),]
+rbind(head(sorted, 5), tail(sorted, 5))
+```
+
+V odvětví *A-F* (zemědělství, průmysl, stavebnictví) je nejvíce zaměstnanců ve Vídni, pak v Linci a Welsu a následuje Graz. Nejméně naopak v Lungau, Außerfernu a Mittelburgenlandu. Zmiňované Extra-Regio NUTS 3 nemá v tomto odvětví žádné zaměstnance.
+
+```{r}
+sorted <- df_gj[order(-df_gj$values),]
+rbind(head(sorted, 5), tail(sorted, 5))
+```
+
+Vídeň a Linec-Wels mají nejvíce zaměstnanců i v odvětví *G-J* (maloobchod, doprava, ubytování, stravování), třetí až páté místo už se liší. Naopak regiony s nejméně zaměstnanci jsou stejné, jen v jiném pořadí.
+
+```{r}
+sorted <- df_kn[order(-df_kn$values),]
+rbind(head(sorted, 5), tail(sorted, 5))
+```
+
+V odvětví *K-N* (ICT, finančnictví) jsou čtyři z pěti regionů s nejvíce zaměstnanci stejné jako u minulého odvětví, ale na pátém místě je Innsbruck. Regiony s nejméně zaměstnanci jsou stále stejné.
+
+```{r}
+sorted <- df_ou[order(-df_ou$values),]
+rbind(head(sorted, 5), tail(sorted, 5))
+```
+
+Regiony s nejméně i nejvíce zaměstnanci jsou v odvětví *O-U* (veřejný sektor) stejné jako u *K-N* (ICT, finančnictví), jen se trochu změnilo pořadí. Ještě můžeme vidět, že jde o jediné odvětví mající zaměstnance v Extra-Regio NUTS 3.
+
+Vídeň a Linec-Wels vedou ve všech odvětvích. To dává smysl, Vídeň je hlavní město a Linec i Wels jsou poměrně velká města spojená do jednoho regionu. Osttirol, Mittelburgenland, Außerfern, Lungau a Extra-Regio NUTS 3 mají naopak nejméně zaměstnanců ve všech odvětvích.
+
+Podíváme se i na boxploty pro jednotlivá odvětví a následně jednotlivé regiony.
+
+```{r}
+ggplot(df, aes(x=values, y=nace_r2, fill=nace_r2)) +
+    geom_boxplot(outlier.color="red", show.legend=F) +
+    geom_jitter(size=0.4, alpha=0.8, show.legend=F)
+```
+
+Na boxplotech hezky vidíme, proč některé kategorie mají velký rozdíl mezi průměrem a mediánem. Odlehlé hodnoty pohnou s průměrem, ale s mediánem ne.
+
+```{r}
+ggplot(df, aes(x=values, y=label, fill=geo)) +
+    geom_boxplot(outlier.color="red", show.legend=F) +
+    geom_jitter(size=0.4, alpha=0.8, show.legend=F)
+```
+
+Na dalších boxplotech je hezky vidět rozdíl mezi Vídní a ostatními regiony.
+
+## Kontingenční tabulka
+
+```{r}
+ct <- xtabs(formula = values ~ label + nace_r2, data = df)
+addmargins(ct)
+```
+
+V řádcích kontingenční tabulky jsou jednotlivé regiony, ve sloupcích odvětví zaměstnání. Každé políčko nám tedy říká, kolik osob z daného regionu bylo v roce 2022 zaměstnáno v daném odvětví. V posledním řádku, resp. sloupci je vždy součet hodnot. Vidíme, že regiony, které mají více obyvatel než ostatní, mají často více zaměstnanců ve všech odvětvích. V žádném regionu není drtivá většina zaměstnanců pouze v jednom sektoru (mimo Extra-Regio NUTS 3). Na posledním řádku vidíme, že v odvětví *K-N* je téměř o polovinu méně zaměstnanců než v ostatních odvětvích.
+
+Otestuji nezávislost regionů a odvětví. Jelikož mám v tabulce nulové hodnoty, použiju Fisherův faktoriálový test.
+
+$H_0:$ Region a odvětví jsou nezávislé, distribuce zaměstnanců v odvětvích nezávisí na regionu.\
+$H_A:$ Region a odvětví nejsou nezávislé, zaměstnanost v odvětvích se liší podle regionu.
+
+```{r}
+fisher <- fisher.test(ct, simulate.p.value=T)
+fisher
+```
+
+P-hodnota je velmi malá, tedy zamítáme nulovou hypotézu ve prospěch alternativní. V různých regionech je různé rozdělení zaměstnanců v odvětvích.
+
+## Statistické testy
+
+Srovnám počty zaměstnanců v ICT a finančnictví (*K-N*) v NUTS 3 regionech Rakouska a Německa v roce 2022.
+
+```{r}
+df_de_kn <- data[grepl("^DE.{3}", data$geo),]
+df_de_kn <- df_de_kn[df_de_kn$TIME_PERIOD == "2022-01-01",]
+df_de_kn <- df_de_kn[df_de_kn$wstatus == "EMP",]
+df_de_kn <- df_de_kn[df_de_kn$nace_r2 == "K-N",]
+df_de_kn$freq <- NULL
+df_de_kn$unit <- NULL
+df_de_kn$wstatus <- NULL
+df_de_kn$TIME_PERIOD <- NULL
+df_de_kn$nace_r2 <- factor(df_de_kn$nace_r2)
+df_de_kn$geo <- factor(df_de_kn$geo)
+df_de_kn
+```
+
+Nejprve otestuji normalitu pro obě země. Použiju Shapirův-Wilkův test.
+
+$H_0:$ Data jsou normálně rozdělena.\
+$H_A:$ Data nejsou normálně rozdělena.
+
+```{r}
+shapiro.test(df_kn$values)
+```
+
+```{r}
+shapiro.test(df_de_kn$values)
+```
+
+P-hodnoty u obou zemí vyšly velmi malé, tedy zamítáme nulovou hypotézu. Data nejsou normálně rozdělena.
+
+Otestuji, zda mají obě skupiny stejné rozdělení. Použiju Mannův-Whitneyův U test, protože data nejsou normálně rozdělena.
+
+$H_0:$ Rozdělení obou skupin je stejné.\
+$H_A:$ Rozdělení obou skupin je různé.
+
+```{r}
+wilcox.test(df_kn$values, df_de_kn$values)
+```
+
+P-hodnota je 0.801 \> 0.05, tedy nezamítáme nulovou hypotézu. Připouštíme, že rozdělení obou skupin je stejné. Mezi rozděleními počtu zaměstnanců v ICT a finančnictví v NUTS 3 regionech Rakouska a Německa v roce 2022 neexistuje statisticky významný rozdíl. V NUTS 3 regionech Rakouska i Německa tedy je podobný počet zaměstnanců v ICT a finančnictví. To dává smysl, NUTS 3 regiony mají podobný počet obyvatel a Německo a Rakousko jsou srovnatelně vyspělé země, tedy bych moc velký rozdíl neočekával.
+
+Nakonec otestuji korelační koeficient pro relativní počty zaměstnanců v odvětvích *K-N* (ICT, finančnictví) a *A-F* (zemědělství, průmysl, stavebnictví) v Rakousku v roce 2022. Má domněnka je, že čím větší je podíl zaměstnanců v ICT a finančnictví, tím menší je podíl zaměstnanců v zemědělství, průmyslu a stavebnictví. Proto vybírám jednostrannou alternativu - záporný korelační koeficient. Jelikož jsem u *K-N* zamítl normalitu, budu testovat Spearmanův korelační koeficient.
+
+$H_0: \rho_S = 0$\
+$H_A: \rho_S < 0$
+
+```{r}
+df_total <- data[grepl("^AT.{3}", data$geo),]
+df_total <- df_total[df_total$TIME_PERIOD == "2022-01-01",]
+df_total <- df_total[df_total$wstatus == "EMP",]
+df_total <- df_total[df_total$nace_r2 == "TOTAL",]
+df_total$freq <- NULL
+df_total$unit <- NULL
+df_total$wstatus <- NULL
+df_total$TIME_PERIOD <- NULL
+df_total$nace_r2 <- NULL
+colnames(df_total)[colnames(df_total) == "values"] <- "values_total"
+```
+
+```{r}
+df_tmp <- df_kn
+df_tmp$nace_r2 <- NULL
+colnames(df_tmp)[colnames(df_tmp) == "values"] <- "values_kn"
+df_total <- merge(df_total, df_tmp, by="geo")
+df_total$label <- NULL
+```
+
+```{r}
+df_tmp <- df_af
+df_tmp$nace_r2 <- NULL
+colnames(df_tmp)[colnames(df_tmp) == "values"] <- "values_af"
+df_total <- merge(df_total, df_tmp, by="geo")
+df_total$label <- NULL
+```
+
+```{r}
+df_total$values_kn_relative <- df_total$values_kn / df_total$values_total
+df_total$values_af_relative <- df_total$values_af / df_total$values_total
+df_total
+```
+
+```{r}
+cor.test(df_total$values_kn_relative, df_total$values_af_relative, method="spearman", alternative="less")
+```
+
+P-hodnota je menší než 0.05, tedy zamítáme nulovou hypotézu ve prospěch alternativní. Potvrdila se má domněnka, že korelační koeficient je záporný. Výběrový korelační koeficient je -0.376, mezi skupinami je slabá negativní korelace. Čím větší je v dané oblasti podíl zaměstnanců v ICT a finančnictví, tím menší je podíl zaměstnanců v zemědělství, průmyslu a stavebnictví.
+
+## Závěr
+
+Podíval jsem se, jaký byl v roce 2022 v různých regionech Rakouska a v různých odvětvích počet zaměstnanců. Nepřekvapilo mě, že ve Vídni bylo zaměstnanců více než v ostatních oblastech. Provedl jsem několik statistických testů, výsledky mě taktéž nepřekvapily.
