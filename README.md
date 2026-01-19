@@ -14,3 +14,4 @@ Collection of machine learning, data science and statistical modeling projects
 ## R
 
 1. **Employment in Austria**: Statistical analysis of employment data in different sectors in Austria in 2022, contingency table, statistical tests
+2. **Nitrate concentration in rivers**: Regression using both continuous and categorical features, trying to find the best model (good, but simple) 

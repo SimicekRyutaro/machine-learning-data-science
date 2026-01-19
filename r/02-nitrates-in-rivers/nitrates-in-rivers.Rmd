@@ -1,0 +1,370 @@
+# Koncentrace dusičnanů v řekách
+
+Budu pracovat z datasetem [ex1221](https://search.r-project.org/CRAN/refmans/Sleuth2/html/ex1221.html) z balíčku [Sleuth2](https://cran.r-project.org/web/packages/Sleuth2/index.html). Budu zkoumat závislost koncentrace dusičnanů v řekách na ostatních příznacích.
+
+```{r}
+library(Sleuth2)
+library(ggplot2)
+library(lmtest)
+```
+
+```{r}
+data <- ex1221
+head(data)
+```
+
+## Základní statistická šetření
+
+Dataset obsahuje údaje o množství dusičnanů v řekách. Měření bylo provedeno, aby výzkumníci mohli zkoumat, zda množství dusičnanů v řekách souvisí s hustotou osídlení v dané oblasti.
+
+```{r}
+sum(is.na(data))
+```
+
+```{r}
+dim(data)
+```
+
+```{r}
+colnames(data)
+```
+
+Dataset neobsahuje chybějící hodnoty, má 42 řádků (pozorování) a 11 sloupců (příznaků). Jednotlivé příznaky jsou:
+
+-   River: řeka
+-   Country: země
+-   Discharge: odhadovaný průměrný roční odtok vody z řeky do oceánu ($m^3/s$)
+-   Runoff: odhadovaný průměrný roční odtok z povodí ($\frac{l}{s \cdot km^2}$)
+-   Area: rozloha povodí ($km^2$)
+-   Density: hustota zalidnění ($lidé/km^2$)
+-   NO3: koncentrace dusičnanů ($\mu M/l$)
+-   Export: export dusičnanů (součin příznaků Runoff a NO3)
+-   Dep: depozice dusičnanů (úměrná součinu NPrec a Prec)
+-   NPrec: množství dusičnanů ve srážkách ($\frac{\mu mol \space NO_3}{s \cdot km^2}$)
+-   Prec: srážky ($cm/rok$)
+
+```{r}
+summary(data)
+```
+
+Vidíme, že některé příznaky mají opravdu velké rozpětí (Discharge, Area). U většiny příznaků je medián rozdílný od průměru, to bude způsobené odlehlými hodnotami.
+
+Podívejme se na histogramy a boxploty příznaků, které použiju níže.
+
+```{r}
+par(mfrow=c(2,3))
+hist(data$NO3)
+hist(data$Density)
+hist(data$NPrec)
+boxplot(data$NO3, main="Boxplot of data$NO3")
+boxplot(data$Density, main="Boxplot of data$Density")
+boxplot(data$NPrec, main="Boxplot of data$NPrec")
+```
+
+Ještě se podívejme na korelační matici.
+
+```{r}
+cor(data[, sapply(data, is.double)])
+```
+
+Z korelační matice vidíme, že NO3 je poměrně silně korelované s Density, Export a NPrec.
+
+## Závislost na jednom numerickém příznaku
+
+Budu zkoumat, zda NO3 (koncentrace dusičnanů v řekách) závisí na NPrec (množství dusičnanů ve srážkách).
+
+```{r}
+df_task2 <- data[, c("NPrec", "NO3")]
+fit <- lm(NO3 ~ NPrec, data = df_task2)
+tmp <- predict(fit, interval="prediction")
+df_task2 <- cbind(df_task2, tmp)
+```
+
+```{r}
+ggplot(df_task2, aes(x=NPrec, y=NO3)) +
+    geom_point() +
+    geom_line(aes(y=fit), color="blue") +
+    geom_line(aes(y=lwr), color="red", linetype="dashed") +
+    geom_line(aes(y=upr), color="red", linetype="dashed")
+```
+
+```{r}
+summary(fit)
+```
+
+Intercept vyšel -16.0989, při nulovém množství dusičnanů ve srážkách bude model predikovat tuto koncentraci dusičnanů v řekách. P-hodnota testu nulovosti interceptu je 0.352, intercept není statisticky významný.
+
+Koeficient pro NPrec vyšel 3.7717. Když se NPrec zvýší o 1, predikce se zvýší o 3.7717. P-hodnota testu nulovosti vyšla velmi malá, tento koeficient je statisticky významný.
+
+Koeficient determinace $R^2$ vyšel 0.4653, model vysvětluje 46.5 % variability v koncentraci dusičnanů, ale pořád zbývá 53.5 % variability, kterou nelze vysvětlit tímto modelem.
+
+Adujstovaný koeficient determinace je 0.4519. Rozdíl mezi $R^2$ a adjusted $R^2$ je malý. Model není zbytečně overfittován.
+
+## Závislost na jednom kategorickém příznaku
+
+```{r}
+length(unique(data$River))
+length(unique(data$Country))
+```
+
+```{r}
+unique(data$Country)
+```
+
+Jediné dvě kategorické proměnné jsou River a Country. River má 42 různých hodnot, každé pozorování odpovídá jiné řece. Country má 26 různých hodnot, to je moc. Vytvořím si nový příznak Continent, který bude mít 3 různé hodnoty (America, Europe, Other), a využiju ho pro analýzu rozptylu.
+
+```{r}
+continent_mapping <- list()
+continent_mapping$Italy <- "Europe"
+continent_mapping$S_America <- "America"
+continent_mapping$Ireland <- "Europe"
+continent_mapping$USA <- "America"
+continent_mapping$Rumania <- "Europe"
+continent_mapping$Canada <- "America"
+continent_mapping$India <- "Other"
+continent_mapping$Norway <- "Europe"
+continent_mapping$China <- "Other"
+continent_mapping$Columbia <- "America"
+continent_mapping$SE_Asia <- "Other"
+continent_mapping$England <- "Europe"
+continent_mapping$"Nthlnds/Belgium" <- "Europe"
+continent_mapping$Australia <- "Other"
+continent_mapping$W_Africa <- "Other"
+continent_mapping$NE_Africa <- "Other"
+continent_mapping$S_Africa <- "Other"
+continent_mapping$Venezuela <- "America"
+continent_mapping$Argentina <- "America"
+continent_mapping$Europe <- "Europe"
+continent_mapping$France <- "Europe"
+continent_mapping$"Canada/USA" <- "America"
+continent_mapping$Poland <- "Europe"
+continent_mapping$Russia <- "Other"
+continent_mapping$Zaire <- "Other"
+continent_mapping$SE_Africa <- "Other"
+```
+
+```{r}
+data$Continent <- unlist(continent_mapping[match(data$Country, names(continent_mapping))])
+data$Continent <- factor(data$Continent)
+data[, c("River", "Country", "Continent")]
+```
+
+```{r}
+summary(data$Continent)
+```
+
+Nejvíce měření je z amerických řek (17), na druhém místě je Evropa (14) a ve zbytku světa bylo provedeno 11 měření. Podívejme se na boxploty pro různé kontinenty.
+
+```{r}
+ggplot(data, aes(x=Continent, y=NO3, fill=Continent)) +
+    geom_boxplot(outlier.color="red", show.legend=F) +
+    geom_jitter(size=0.5, alpha=0.8, show.legend=F)
+```
+
+Podle boxplotů to vypadá, že v Evropě je vyšší koncentrace dusičnanů v řekách než jinde. Mezi Amerikou a Other takový rozdíl není.
+
+```{r}
+summary(lm(NO3 ~ Continent, data = data))
+```
+
+Intercept vyšel 22.54, tuto hodnotu model predikuje pro referenční kategorii kontinentu (Amerika). P-hodnota je 0.27 \> 0.05, intercept není statisticky významný.
+
+Koeficient pro Evropu vyšel 105.41. Takže pro Evropské řeky model predikuje NO3 22.54 + 105.41 = 127.95. P-hodnota je 0.00116 \< 0.05, koeficient je statisticky významný.
+
+Koeficient pro Other vyšel 17.71. Pro řeky z ostatních kontinentů model predikuj 22.54 + 17.71 = 40.25. P-hodnota vyšla 0.586 \> 0.05, koeficient není statisticky významný.
+
+Koeficient determinace $R^2$ je 0.2549, model vysvětluje přibližně 25.49 % variability v koncentraci dusičnanů. Adjustovaný koeficient determinace je 0.2167. Není mezi nimi takový rozdíl, takže model není přeučený, ale ani moc dobrý, zbývá zhruba 75 % variability, kterou model nedokáže vysvětlit.
+
+```{r}
+aov(NO3 ~ Continent, data = data)
+```
+
+Reziduální součet čtverců je 270577.54. Součet čtverců vysvětlený kontinentem je 92557.91.
+
+```{r}
+anova(aov(NO3 ~ Continent, data = data))
+```
+
+P-hodnota testu shody středních hodnot je 0.003224, takže zamítáme nulovou hypotézu ve prospěch alternativy, že střední hodnota NO3 je různá pro různé kontinenty.
+
+Podívejme se ještě na Tukeyho HSD test, který testuje shodu středních hodnot ne pro všechny kategorie, ale po dvou.
+
+```{r}
+TukeyHSD(aov(NO3 ~ Continent, data = data))
+```
+
+P-hodnota pro Europe-America a Other-Europe vyšla malá. Střední hodnota NO3 v Evropě je významně odlišná od středních hodnot NO3 v Americe a Other. Zato p-hodnota pro Other-America vyšla 0.847, takže mezi středními hodnotami NO3 v Americe a Other není statisticky významný rozdíl. Mohli bychom je spojit do jedné kategorie, už na boxplotech jsme mohli vidět, že navzájem se oproti Evropě moc neliší.
+
+## Závislost na obou příznacích
+
+Nyní se podívejme na model obsahující oba předchozí regresory (NPrec, Continent) včetně jejich interakce.
+
+```{r}
+df_task4 <- data[, c("NPrec", "Continent", "NO3")]
+fit <- lm(NO3 ~ NPrec * Continent, data=df_task4)
+summary(fit)
+```
+
+Intercept představuje hodnotu predikce, když NPrec je rovno 0 a Continent je referenční kategorie (Amerika).
+
+Koeficient pro NPrec vyšel 1.701. Když se NPrec zvýší o 1 a kontinent bude Amerika (referenční kategorie), predikovaná hodnota NO3 se zvýší o 1.701.
+
+Koeficienty ContinentEurope a ContinentOther říkají, o kolik se liší hodnota NO3 při stejném NPrec pro Evropu a Other oproti Americe (referenční kategorie). Vyšly -47.422 a -4.720.
+
+Koeficienty NPrec:ContinentEurope a NPrec:ContinentOther ukazují, jak se mění vliv NPrec na NO3 v závislosti na kontinentu. Vyšly 2.842 a 1.959. Když se NPrec zvýší o 1 a kontinent bude Evropa, NO3 se zvýší o 1.701 + 2.842 = 4.543. Pro Other to bude 1.701 + 1.959 = 3.66.
+
+P-hodnota všech koeficientů vyšla větší než 0.05. Všechny pospolu nejsou statisticky významné. Mohl bych je postupně začít odebírat a pozorovat změny modelu, to také provedu v další sekci.
+
+```{r}
+anova(fit)
+```
+
+P-hodnota testu nulovosti pro NPrec je velmi malá, tento regresor je statisticky významný. Naopak p-hodnota pro kontinent i interakce je velká, tyto regresory nejsou statisticky významné.
+
+```{r}
+tmp <- predict(fit, interval="prediction")
+df_task4 <- cbind(df_task4, tmp)
+ggplot(df_task4, aes(x=NPrec, y=NO3, group=Continent, color=Continent)) +
+    geom_point() +
+    geom_line(aes(y=fit))
+```
+
+Na grafu vidíme, že přímky mají různé směrnice, to způsobují interakce. Také kvůli interceptu nezačínají v nule.
+
+## Závislost na třech příznacích
+
+K NPrec a Continent přidám Density (hustota zalidnění). Začnu s modelem se všemi interakcemi.
+
+```{r}
+fit_all <- lm(NO3 ~ NPrec * Continent * Density, data = data)
+summary(fit_all)
+```
+
+```{r}
+AIC(fit_all)
+```
+
+Koeficienty determinace vyšly 0.8905 a 0.8503, to je mnohem lepší než u předchozích modelů, ale p-hodnoty u všech koeficientů jsou velké, všechny najednou nejsou významné. Akaikeho informační kritérium je 433.0208. Nejprve odeberu interakci s kontinentem.
+
+```{r}
+fit2 <- lm(NO3 ~ NPrec * Density + Continent, data = data)
+summary(fit2)
+```
+
+Už máme jeden významný koeficient, a to NPrec:Density, který říká o kolik se změní vliv NPrec na NO3 při změně Density o 1 a naopak.
+
+```{r}
+anova(fit2, fit_all)
+```
+
+```{r}
+AIC(fit2)
+```
+
+Mezi modely není statisticky významný rozdíl, p-hodnota vyšla 0.6694. Jednoduší model může být stejně efektivní. AIC je 426.35, což je méně než u předchozího modelu, i podle tohoto kritéria je lepší podmodel. Většina koeficientů byla ale stále nevýznamná, zkusím úplně odebrat Continent.
+
+```{r}
+fit3 <- lm(NO3 ~ NPrec * Density, data = data)
+summary(fit3)
+```
+
+NPrec:Density je stále jediný koeficient s p-hodnotou menší než 0.05. Ostatní p-hodnoty jsou menší než u předchozího modelu, ale tyto koeficienty najednou jsou stále nevýznamné.
+
+```{r}
+anova(fit3, fit2)
+```
+
+```{r}
+AIC(fit3)
+```
+
+Nulovost koeficientů pro Continent nezamítáme, p-hodnota vyšla 0.9463. AIC se zase o kus zmenšilo. Model zkusím zjednodušit ještě víc, odeberu Density, ale ponechám interakci NPrec:Density.
+
+```{r}
+fit4 <- lm(NO3 ~ NPrec + NPrec:Density, data = data)
+summary(fit4)
+```
+
+P-hodnoty už vyšly nižší, ale u NPrec je stále větší než 0.05.
+
+```{r}
+anova(fit4, fit3)
+```
+
+```{r}
+AIC(fit4)
+```
+
+P-hodnota je 0.2412 \> 0.05, modely se významně neliší. AIC se zase o trochu zmenšilo. Zkusím ještě odebrat NPrec, ponechám pouze intercept a NPrec:Density.
+
+```{r}
+fit5 <- lm(NO3 ~ NPrec:Density, data = data)
+summary(fit5)
+```
+
+Nyní je p-hodnota pro intercept těsně větší než 0.05.
+
+```{r}
+anova(fit5, fit4)
+```
+
+```{r}
+AIC(fit5)
+```
+
+Mezi tímto a předchozím modelem opět není statisticky významný rozdíl, p-hodnota je 0.0733 \> 0.05. AIC se ale zvětšilo, tedy podle tohoto kritéria je předchozí model o trochu lepší. Zkusím odebrat ještě intercept.
+
+```{r}
+fit6 <- lm(NO3 ~ 0 + NPrec:Density, data = data)
+summary(fit6)
+```
+
+```{r}
+anova(fit6, fit5)
+```
+
+```{r}
+AIC(fit6)
+```
+
+Zbyl nám pouze jeden koeficient a mezi modely opět není statisticky významný rozdíl, AIC se však zase o trochu zvětšilo. Z původního složitého modelu jsme se dostali na mnohem jednodušší model, který má koeficienty $R^2$ i adjustované $R^2$ přibližně 0.89, což je ještě lepší než původní model. Ještě otestuji, zda je možné původní široký model redukovat na tento finální.
+
+```{r}
+anova(fit6, fit_all)
+```
+
+```{r}
+AIC(fit6)
+AIC(fit_all)
+```
+
+P-hodnota vyšla 0.3811, mezi původním a finálním modelem není statisticky významný rozdíl. I Akaikeho informační kritérium redukovaného modelu je menší než širokého modelu.
+
+Finální model je `lm(NO3 ~ 0 + NPrec:Density)`, což odpovídá $NO3 = \beta \cdot NPrec \cdot Density$, kde $\beta = 0.018$. Pokud hodnota NPrec zůstane stejná a Density se zvýší o jedna, NO3 se zvýší o $0.018 \cdot NPrec$. Analogický vztah platí, když se Density nemění a NPrec ano.
+
+## Ověření předpokladů
+
+Můj finální model je lineární regresní model. Regresory nemohou být korelované, protože používám jen jeden. Otestuji normalitu a homoskedasticitu reziduí. Nezávislost reziduí testovat nebudu, protože jde o řeky z celého světa a navíc data nejsou seřazená (jako např. časové řady).
+
+```{r}
+shapiro.test(residuals(fit6))
+```
+
+```{r}
+plot(fit6, which = 2)
+```
+
+Normalitu reziduí zamítáme. Na Q-Q plotu je vidět, že rozdělení reziduí má těžší chvosty než normální rozdělení. Otestuji ještě homoskedasticitu pomocí Goldfeldova-Quandtova testu.
+
+```{r}
+gqtest(fit6)
+```
+
+```{r}
+plot(fit6, which=1)
+abline(h = 0)
+```
+
+Homoskedasticitu taky zamítám, p-hodnota vyšla 0.013. Na grafu je vidět, že pro malé hodnoty predikce je rozptyl reziduí menší než pro větší hodnoty predikce.
+
+Nesplněné předpoklady mohou vést k nepřesným testům (nulovost koeficientů, model-podmodel), tzn. ke zkresleným p-hodnotám a testovým statistikám. Abych tyto problémy vyřešil, mohl bych vyzkoušet transformaci dat nebo robustní regresi.
