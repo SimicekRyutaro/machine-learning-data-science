@@ -1,6 +1,6 @@
 # Koncentrace dusičnanů v řekách
 
-Budu pracovat z datasetem [ex1221](https://search.r-project.org/CRAN/refmans/Sleuth2/html/ex1221.html) z balíčku [Sleuth2](https://cran.r-project.org/web/packages/Sleuth2/index.html). Budu zkoumat závislost koncentrace dusičnanů v řekách na ostatních příznacích.
+Budu pracovat s datasetem [ex1221](https://search.r-project.org/CRAN/refmans/Sleuth2/html/ex1221.html) z balíčku [Sleuth2](https://cran.r-project.org/web/packages/Sleuth2/index.html). Budu zkoumat závislost koncentrace dusičnanů v řekách na ostatních příznacích.
 
 ```{r}
 library(Sleuth2)
