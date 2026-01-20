@@ -1,0 +1,510 @@
+# Průměrná mzda v Evropě
+
+### František Kareš, Šimon Kubeš
+
+Budeme zkoumat průměrnou mzdu v evropských zemích v roce 2013. Použijeme tento [dataset](https://ec.europa.eu/eurostat/databrowser/view/nama_10_fte/default/table). Vybereme regresory, budeme zkoumat jejich závislost s průměrnou mzdou.
+
+```{r}
+library(eurostat)
+library(ggplot2)
+library(lmtest)
+library(car)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(giscoR)
+library(sf)
+library(dplyr)
+```
+
+M je v našem případě 1, proto budeme uvažovat data z roku 2013.
+
+## Příprava dat
+
+```{r}
+data <- get_eurostat("nama_10_fte")
+head(data)
+```
+
+```{r}
+unique(data$freq)
+unique(data$unit)
+unique(data$geo)
+unique(data$TIME_PERIOD)
+```
+
+V datasetu jsou záznamy o průměrném platu pro období jednoho roku. Vyfiltrujeme si záznamy z roku 2013, kde jednotka je euro (druhá možnost je national currency, to se nehodí pro porovnávání zemí mezi sebou).
+
+```{r}
+df <- data[data$TIME_PERIOD == "2013-01-01" & data$unit == "EUR",]
+head(df)
+```
+
+Zbavíme se nepotřebných sloupců a pak odebereme záznamy, kde *geo* je EA20 (seskupení zemí, které používají euro) nebo EU27_2020 (seskupení členských zemí Evropské unie).
+
+```{r}
+df <- df[ ! df$geo %in% c("EA20", "EU27_2020"), c("geo", "values")]
+df
+```
+
+## Základní statistická šetření
+
+```{r}
+summary(df$values)
+```
+
+```{r}
+df_labeled <- df
+df_labeled$geo <- label_eurostat(df$geo, dic = "geo")
+ggplot(df_labeled, aes(x = reorder(geo, values), y = values)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = round(values, 0)), hjust = -0.1, size = 3) +
+  coord_flip() +
+  
+  labs(
+    title = "Average Full-Time Adjusted Salary per Employee (2013)",
+    x = "Country",
+    y = "Salary (€)"
+  ) +
+  theme_minimal() +
+  expand_limits(y = max(df_labeled$values) * 1.1)
+```
+
+Nejmenší mzda byla v Bulharsku, pak v Rumunsku a v Litvě. Naopak největší mzda byla v roce 2013 v Lucembursku, Dánsku a Švédsku. Lucembursko by se vzhledem ke své malé rozloze a počtu obyvatel (663 430) dalo považovat spíše za outlier. I přesto je však patrný výrazný rozdíl mezi 1. a 3. kvartilem.
+
+```{r, fig.width=10,fig.height=12}
+map_nuts0_base <- get_eurostat_geospatial(nuts_level = 0, resolution = "10", output_class = "sf",)
+
+worldmap <- ne_countries(scale = 'medium', type = 'map_units',
+                         returnclass = 'sf')
+europe_cropped <- st_crop(worldmap, xmin = -20, xmax = 45,
+                                    ymin = 30, ymax = 73)
+
+map_nuts0 <- left_join(europe_cropped, df, by = c("iso_a2" = "geo"))
+
+ggplot(map_nuts0) +
+  geom_sf(aes(fill = values), color = "white") +
+  scale_fill_viridis_c(option = "plasma", na.value = "lightgrey") +
+  labs(
+    title = "Median Salary in Europe (EUR)",
+    fill = "Median Salary (€)"
+  ) +
+  theme_minimal() +
+  coord_sf(xlim = c(-20, 45), ylim = c(30, 73), expand = FALSE)
+
+
+```
+
+Z mapy je patrný rozdíl mezi východní Evropou a západní Evropou.
+
+```{r}
+ggplot(df, aes(x=values)) +
+    geom_histogram(bins=16, colour="black", fill="skyblue")
+```
+
+Histogram naznačuje, že data nejspíše nebudou normálně rozdělena. Normalitu rovnou otestujeme.
+
+```{r}
+shapiro.test(df$values)
+```
+
+**Zamítáme** nulovou hypotézu ve prospěch alternativy (**p-value** \< 0.05), data nejsou normálně rozdělena.
+
+## Volba regresorů
+
+S průměrnou mzdou by mohlo souviset HDP, které slouží k měření ekonomického růstu. Nabízí se také vzdělání. Očekávali bychom, že lidé s vyšším vzděláním budou mít vyšší mzdy. Dále třeba sektor, ve kterém je nejvíce zaměstnanců dané země (zemědělství, služby, průmysl). My jsme si vybrali následující regresory:
+
+### První regresor - HDP na osobu
+
+Prvním regresorem bude HDP na osobu v eurech z datasetu [nama_10_pc](https://ec.europa.eu/eurostat/databrowser/view/nama_10_pc/default/table).
+
+```{r}
+tmp <- get_eurostat("nama_10_pc")
+tmp <- tmp[tmp$TIME_PERIOD == "2013-01-01",]
+tmp <- tmp[tmp$na_item == "B1GQ",]  # HDP v trznich cenach
+tmp <- tmp[tmp$unit == "CP_EUR_HAB",]  # HDP v eurech
+tmp$gdp <- tmp$values
+tmp$values <- NULL
+tmp
+```
+
+```{r}
+df <- merge(df, tmp[,c("geo", "gdp")], by="geo", all.x=TRUE)
+df
+```
+
+### Vztah HDP a průměrného platu
+
+Protože jsme **zamítnuli** normalitu rozdělení průměrných mezd, použijeme Spearmanův korelační koeficient k ověření vztahu mezi HDP a průměrným platem.
+
+```{r}
+cor(df$values, df$gdp, method="spearman")
+```
+
+Korelační koeficient je 0.975, veličiny **jsou** silně **kladně** **korelované**.
+
+```{r}
+summary(df$gdp)
+```
+
+Průměrné HDP na obyvatele je 24988 EUR, ale medián 18310 EUR, maximum je 90030 EUR a minimum 5870 EUR.
+
+```{r}
+rbind(
+    head(df[order(-df$gdp),], 3),
+    tail(df[order(-df$gdp),], 3)
+)
+```
+
+Největší HDP na obyvatele bylo v roce 2013 v Lucembursku, Dánsku a Švédsku nejmenší naopak v Bulharsku, Rumunsku a Polsku. To je velmi podobné jako u průměrné mzdy. Ještě se podívejme na histogram.
+
+```{r}
+ggplot(df, aes(x=gdp)) +
+    geom_histogram(bins=16, colour="black", fill="skyblue")
+```
+
+Většina zemí měla v roce 2013 HDP na obyvatele menší než 25000 EUR, nějaké země měly mezi 25000 a 50000 EUR a pak můžeme vidět odlehlé Lucembursko s 90030 EUR.
+
+```{r}
+ggplot() +
+  geom_histogram(data = df, aes(x = values, fill = "Průměrná mzda"), 
+                 bins = 16, colour = "black", alpha = 0.8) +
+  
+  geom_histogram(data = df, aes(x = gdp, fill = "HDP"), 
+                 bins = 16, colour = "black", alpha = 0.3) +
+
+  scale_fill_manual(values = c("Průměrná mzda" = "skyblue", "HDP" = "darkblue")) +
+  labs(title = "Překrývající se histogramy HDP a průměrné mzdy", 
+       x = "gdp/salary", y = "count", fill = "Legenda") +
+  theme_minimal()
+
+```
+
+Z grafů je patrné, že rozdělení obou veličin jsou podobná a téměř se překrývají, což odpovídá vysoké hodnotě Spearmanova korelačního koeficientu.
+
+### Druhý regresor - míra nezaměstnanosti
+
+Druhý regresor bude míra nezaměstnanosti lidí ve věku 15-74 let v procentech z datasetu [lfsa_urgan](https://ec.europa.eu/eurostat/databrowser/view/LFSA_URGAN/default/table).
+
+```{r}
+tmp <- get_eurostat("lfsa_urgan")
+tmp <- tmp[tmp$TIME_PERIOD == "2013-01-01",]
+tmp <- tmp[tmp$sex == "T",]  # Total
+tmp <- tmp[tmp$age == "Y15-74",]
+tmp <- tmp[tmp$citizen == "TOTAL",]
+tmp$unempl <- tmp$values
+tmp$values <- NULL
+tmp
+```
+
+```{r}
+df <- merge(df, tmp[,c("geo", "unempl")], by="geo", all.x=TRUE)
+df
+```
+
+### Vztah míry nezaměstnanosti a průměrného platu
+
+```{r}
+cor(df$values, df$unempl, method="spearman")
+```
+
+U nezaměstnanosti je korelační koeficient s průměrnou mzdou **záporný**, to dává smysl. Čím více nezaměstnanosti, tím nižší platy.
+
+```{r}
+summary(df$unempl)
+```
+
+Průměrná nezaměstnanost je 11.465 %, medián je 10.15 %, minimum 5.2 % a maximum 27.5 %.
+
+```{r}
+rbind(
+    head(df[order(-df$unempl),], 3),
+    tail(df[order(-df$unempl),], 3)
+)
+```
+
+Největší nezaměstnanost byla v roce 2013 v Řecku, nejspíše kvůli dopadům způsobeným dluhovou krizí, kde její vrchol byl v letech 2011-2012. Nejmenší naopak v Německu, Rakousku a Lucembursku.
+
+```{r}
+ggplot(df, aes(x=unempl)) +
+    geom_histogram(bins=16, colour="black", fill="skyblue")
+```
+
+### Třetí regresor - míra populace s terciárním vzděláním
+
+Třetí regresor bude míra populace ve věku 25-64 let s terciárním vzděláním (VOŠ, bakalářské, magisterské, doktorské studium VŠ) v procentech z datasetu [edat_lfse_03](https://ec.europa.eu/eurostat/databrowser/view/edat_lfse_03/default/table).
+
+```{r}
+tmp <- get_eurostat("edat_lfse_03")
+tmp <- tmp[tmp$TIME_PERIOD == "2013-01-01",]
+tmp <- tmp[tmp$sex == "T",]
+tmp <- tmp[tmp$age == "Y25-64",]
+tmp <- tmp[tmp$isced11 == "ED5-8",]
+tmp$edu <- tmp$values
+tmp$values <- NULL
+tmp
+```
+
+```{r}
+df <- merge(df, tmp[,c("geo", "edu")], by="geo", all.x=TRUE)
+df
+```
+
+### Vztah míry populace s terciárním vzděláním a průměrného platu
+
+```{r}
+cor(df$values, df$edu, method="spearman")
+```
+
+Korelační koeficient průměrných mezd a procenta populace s terciárním vzděláním je **kladný**.
+
+```{r}
+summary(df$edu)
+```
+
+Průměrně má terciární vzdělání 28.88 % populace, medián je 28.25 %, minimum 15.6 % a maximum 42.6 %.
+
+```{r}
+rbind(
+    head(df[order(-df$edu),], 3),
+    tail(df[order(-df$edu),], 3)
+)
+```
+
+Největší podíl populace s terciárním vzděláním byl v roce 2013 v Irsku, Lucembursku a Finsku, nejmenší naopak v Rumunsku, Itálii a Portugalsku.
+
+```{r}
+ggplot(df, aes(x=edu)) +
+    geom_histogram(bins=16, colour="black", fill="skyblue")
+```
+
+### Čtvrtý regresor - before/after (2000) EU membership
+
+Čtvrtý regresor bude, zda se země stala členem EU před rokem 2000, nebo po něm.\
+[Zdroj](https://cs.wikipedia.org/wiki/%C4%8Clensk%C3%BD_st%C3%A1t_Evropsk%C3%A9_unie#P%C5%99ehled_st%C3%A1t%C5%AF_EU)
+
+```{r}
+eu_membership <- list()
+eu_membership$AT <- "Before"
+eu_membership$BE <- "Before"
+eu_membership$BG <- "After"
+eu_membership$CY <- "After"
+eu_membership$CZ <- "After"
+eu_membership$DE <- "Before"
+eu_membership$DK <- "Before"
+eu_membership$EE <- "After"
+eu_membership$EL <- "Before"
+eu_membership$ES <- "Before"
+eu_membership$FI <- "Before"
+eu_membership$FR <- "Before"
+eu_membership$HR <- "After"
+eu_membership$HU <- "After"
+eu_membership$IE <- "Before"
+eu_membership$IT <- "Before"
+eu_membership$LT <- "After"
+eu_membership$LU <- "Before"
+eu_membership$LV <- "After"
+eu_membership$MT <- "After"
+eu_membership$PL <- "After"
+eu_membership$PT <- "Before"
+eu_membership$RO <- "After"
+eu_membership$SE <- "Before"
+eu_membership$SI <- "After"
+eu_membership$SK <- "After"
+eu_membership <- unlist(eu_membership)
+```
+
+```{r}
+df$eu_join <- eu_membership[df$geo]
+df$eu_join <- as.factor(df$eu_join)
+df
+```
+
+```{r}
+summary(df$eu_join)
+```
+
+Ze zemí v datasetu se jich třináct stalo členem EU před rokem 2000 a třináct po něm.
+
+### Vztah roku připojení k EU a průměrného platu
+
+```{r}
+summary(df[df$eu_join == "Before",]$values)
+```
+
+```{r}
+summary(df[df$eu_join == "After",]$values)
+```
+
+Vidíme, že se hodnoty mezi skupinami dost liší. V roce 2013 byl průměrný plat v zemi, která se do EU přidala před rokem 2000, větší než maximální plat zemí, které se přidaly do EU po roce 2000.
+
+```{r}
+ggplot(df, aes(x=eu_join, y=values, fill=eu_join)) +
+    geom_boxplot(outlier.color="red", show.legend=F) +
+    geom_jitter(size=0.5, alpha=0.8, show.legend=F)
+```
+
+Na boxplotech je rozdíl opravdu patrný.
+
+Ještě se podívejme na korelační matici a variance inflation factor.
+
+```{r}
+cor(df[,c(-1, -6)], method="spearman")
+```
+
+Mezi žádnou dvojicí regresorů není příliš velká korelace.
+
+```{r}
+vif(lm(values ~ gdp + unempl + edu + eu_join, data=df))
+```
+
+Variance inflation factor pro žádný regresor není větší než 5, nejsou na sobě závislé.
+
+## Lineární regresní model
+
+```{r}
+model <- lm(values ~ gdp + unempl + edu + eu_join, data=df)
+summary(model)
+```
+
+### Regresní model
+
+$$
+\text{Salary} = 4835 + 0.4547 \cdot \text{gdp} - 428.5 \cdot \text{unempl} + 262.1 \cdot \text{edu} + 
+\begin{cases}
+0 & \text{pro eu_join} = After,\\
+12730 & \text{pro eu_join} = Before\\
+\end{cases}
+$$
+
+### Vysvětlení koeficientů
+
+-   **Intercept (4835):** Hodnota průměrného platu, když jsou ostatní regresory nulové a *eu_join* je referenční kategorie (After).
+
+-   **Koeficient u gdp (0.4547):** S každým zvýšením HDP na obyvatele o jedno euro se očekává zvýšení průměrného platu o 0.4547 eura.
+
+-   **Koeficient u unempl (-428.5):** Tento záporný koeficient naznačuje, že s růstem míry nezaměstnanosti o jeden procentní bod, se očekává pokles průměrného platu o 428.5 eura.
+
+-   **Koeficient u edu (262.1):** S každým zvýšením podílu lidí ve věku 25–64 let s terciárním vzděláním o jeden procentní bod se očekává zvýšení průměrného platu o 262.1 eura.
+
+-   **Koeficient u eu_joinBefore (12730):** Pokud se země připojila k EU před rokem 2000, očekává se, že průměrný plat bude o 12 730 eur vyšší ve srovnání se zeměmi, které se připojily po roce 2000.
+
+Koeficient determinace $R^2$ je 0.9311, model vysvětluje 93.11 % variability. Adjustovaný koeficient je 0.918, moc se neliší. Regresory *gdp*, *unempl* a *eu_joinBefore* jsou statisticky významné. Regresor *edu* a intercept nejsou statisticky významné.
+
+Multikolinearitu už jsme zkoumali výše - mezi regresory není silná korelace. Pomocí Cookovy vzdálenosti identifikujeme odlehlá pozorování.
+
+```{r}
+plot(model, which=4)
+```
+
+```{r}
+df[18,]
+```
+
+Bod s číslem 18 má velkou Cookovu vzdálenost, jde o Lucembursko, které má *gdp* téměř dvojnásobné oproti druhému největšímu Dánsku, jak jsme viděli výše.
+
+### Předpoklady
+
+Otestujeme předpoklady, nejprve nezávislost a homoskedasticitu reziduí.
+
+```{r}
+dwtest(model)
+```
+
+Jelikož **p-hodnota** \> 0.05, **nezamítáme** nezávislost reziduí.
+
+```{r}
+bptest(model)
+```
+
+**Nezamítáme** ani homoskedasticitu, i když grafy níže ukazují mírné zvýšení rozptylu pro vyšší hodnoty predikce. Zároveň je na nich vidět, že residuum pro Lucembursko je větší.
+
+```{r}
+par(mfrow=c(1, 2))
+plot(model, which=1)
+plot(model, which=3)
+```
+
+Ještě otestujeme normalitu reziduí.
+
+```{r}
+shapiro.test(residuals(model))
+```
+
+```{r}
+plot(model, which=2)
+```
+
+Ani normalitu reziduí nezamítáme, předpoklady **jsou splněny**.
+
+### Výběr podmodelu
+
+Viděli jsme, že model měl nevýznamné komponenty, zkusíme ho **redukovat** na podmodel.
+
+```{r}
+summary(model)
+```
+
+Nejprve odebereme *edu*.
+
+```{r}
+model2 <- lm(values ~ gdp + unempl + eu_join, data=df)
+summary(model2)
+```
+
+Nyní je nevýznamné *unempl*, ale intercept už je významný.
+
+```{r}
+anova(model2, model)
+```
+
+```{r}
+AIC(model)
+AIC(model2)
+```
+
+P-hodnota testu model-podmodel je **0.06435**, mezi modely není statisticky významný rozdíl. Jednodušší model má ale o něco vyšší AIC.
+
+Zkusíme odebrat *unempl*.
+
+```{r}
+model3 <- lm(values ~ gdp + eu_join, data=df)
+summary(model3)
+```
+
+Všechny komponenty už jsou statisticky významné.
+
+```{r}
+anova(model3, model2)
+```
+
+```{r}
+AIC(model2)
+AIC(model3)
+```
+
+Mezi modely opět není statisticky významný rozdíl, je možné ho znovu redukovat, ale AIC je zase o trochu vyšší.
+
+Náš finální model je následující:
+
+$$
+\text{Salary} = 4812 + 0.623 \cdot \text{gdp} +
+\begin{cases}
+0 & \text{pro eu_join} = After,\\
+9678 & \text{pro eu_join} = Before
+\end{cases}
+$$
+
+-   **Intercept (4812):** Hodnota průměrného platu, když *gdp* je 0 a *eu_join* je After.
+
+-   **Koeficient u gdp (0.623):** S každým zvýšením HDP na obyvatele o jedno euro se očekává zvýšení průměrného platu o 0.623 eura.
+
+-   **Koeficient u eu_joinBefore (9678):** Pokud se země připojila k EU před rokem 2000, očekává se, že průměrný plat bude o 9678 eur vyšší ve srovnání se zeměmi, které se připojily po roce 2000.
+
+Koeficient determinace $R^2$ je 0.9096, adjustovaný je 0.9017. Model vysvětluje necelých 91 % variability a nemá zbytečně moc regresorů.
+
+```{r}
+df <- cbind(df, predict(model3, interval="prediction"))
+ggplot(df, aes(x=gdp, y=values, group=eu_join, color=eu_join)) +
+    geom_point() +
+    geom_line(aes(y=fit))
+```
